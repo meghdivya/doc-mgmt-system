@@ -7,5 +7,5 @@
 | 3 | AI provider (OpenAI + Local fallback), caching, insights & custom summary | `tests/test_insights.py` (3 passed) | Completed |
 | 4 | Multi-turn RAG chat, citations, multi-doc, follow-ups & SSE stream | `tests/test_chat_rag.py` (2 passed) | Completed |
 | 5 | Document statistics & processing/cost metrics APIs | `tests/test_metrics.py` (2 passed) | Completed |
-| 6 | Minimal local Vault UI (`/`) + CLI demo (`scripts/demo.py`) | `tests/test_e2e_flow.py` | In Progress |
-| 7 | `README.md`, `AI_USAGE.md`, `docker-compose.yml` & final check | Full suite | Pending |
+| 6 | Minimal local Vault UI (`/`) + CLI demo (`scripts/demo.py`) | `tests/test_e2e_flow.py` (3 passed) | Completed |
+| 7 | `README.md`, `AI_USAGE.md`, `docker-compose.yml` & final check | Full suite (16 passed) | In Progress |

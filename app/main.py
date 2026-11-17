@@ -1,7 +1,10 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.chat import router as chat_router
 from app.api.v1.documents import router as documents_router
@@ -45,6 +48,15 @@ def create_app() -> FastAPI:
     application.include_router(chat_router, prefix="/api/v1")
     application.include_router(metrics_router, prefix="/api/v1")
     application.include_router(health_router)
+
+    static_dir = Path(__file__).resolve().parent / "static"
+    if static_dir.exists():
+        application.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+        @application.get("/", include_in_schema=False)
+        def serve_vault_ui() -> FileResponse:
+            return FileResponse(static_dir / "index.html")
+
     return application
 
 

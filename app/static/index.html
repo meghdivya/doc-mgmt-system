@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vault AI — Intelligent Document System</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo-dot"></span>
+      <div>
+        <h1>Vault AI</h1>
+        <p class="subtitle">AI-Powered Document Vault &amp; Conversational RAG</p>
+      </div>
+    </div>
+    <div class="topbar-meta">
+      <span id="aiModeBadge" class="badge">AI: loading...</span>
+      <a href="/docs" target="_blank" class="link-btn">OpenAPI Docs ↗</a>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <!-- Left Panel: Upload & Vault Documents -->
+    <section class="panel left-panel">
+      <div class="panel-header">
+        <h2>1. Document Vault</h2>
+        <button id="refreshBtn" class="ghost-btn" title="Refresh">↻</button>
+      </div>
+
+      <form id="uploadForm" class="upload-box">
+        <input type="file" id="fileInput" accept=".pdf,.docx,.txt,.md,.csv" required />
+        <button type="submit" id="uploadBtn" class="primary-btn">Upload &amp; Analyze</button>
+        <small class="hint">Supports PDF, DOCX, TXT, MD, CSV</small>
+      </form>
+
+      <div class="scope-bar">
+        <span id="scopeLabel">Chat scope: All completed docs</span>
+      </div>
+      <div id="docList" class="doc-list"></div>
+    </section>
+
+    <!-- Center Panel: RAG Chat -->
+    <section class="panel chat-panel">
+      <div class="panel-header">
+        <div>
+          <h2>2. Chat with Your Documents</h2>
+          <small id="sessionLabel" class="muted">Multi-turn RAG with source citations</small>
+        </div>
+        <button id="newSessionBtn" class="ghost-btn">+ New Chat</button>
+      </div>
+
+      <div id="chatMessages" class="chat-messages">
+        <div class="empty-state">
+          Upload a document on the left, then ask any question about its contents.
+        </div>
+      </div>
+
+      <div id="followUpBar" class="followup-bar"></div>
+
+      <form id="chatForm" class="chat-input-bar">
+        <input
+          type="text"
+          id="questionInput"
+          placeholder="Ask a question about your uploaded documents..."
+          autocomplete="off"
+          required
+        />
+        <button type="submit" id="askBtn" class="primary-btn">Ask</button>
+      </form>
+    </section>
+
+    <!-- Right Panel: AI Insights & Live Metrics -->
+    <section class="panel right-panel">
+      <div class="panel-header">
+        <h2>3. AI Insights</h2>
+      </div>
+      <div id="insightsPane" class="insights-pane">
+        <p class="muted">Click a document in the vault to inspect its summary, tags, and key takeaways.</p>
+      </div>
+
+      <div class="custom-summary-box" id="customSummaryBox" hidden>
+        <h3>Custom Summary</h3>
+        <div class="summary-controls">
+          <select id="sumLength">
+            <option value="short">Short</option>
+            <option value="medium" selected>Medium</option>
+            <option value="detailed">Detailed</option>
+          </select>
+          <select id="sumFocus">
+            <option value="general" selected>General</option>
+            <option value="technical">Technical</option>
+            <option value="action_items">Action Items</option>
+            <option value="risks">Risks</option>
+          </select>
+          <select id="sumTone">
+            <option value="professional" selected>Professional</option>
+            <option value="executive">Executive</option>
+            <option value="simple">Simple</option>
+          </select>
+          <button id="runSummaryBtn" type="button" class="ghost-btn">Generate</button>
+        </div>
+        <pre id="customSummaryOut" class="custom-summary-out"></pre>
+      </div>
+
+      <hr class="divider" />
+      <div class="panel-header">
+        <h2>System Telemetry</h2>
+      </div>
+      <div id="metricsGrid" class="metrics-grid"></div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

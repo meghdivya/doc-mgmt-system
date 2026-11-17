@@ -21,7 +21,7 @@ def contextualize_query(question: str, prior_messages: list[ChatMessage]) -> str
     q_words = tokenize_words(question)
     pronouns = {"it", "its", "they", "their", "that", "this", "those", "these", "there", "more"}
     raw_tokens = {w.lower().strip("?.,!") for w in question.split()}
-    needs_context = len(q_words) <= 4 or bool(raw_tokens & pronouns)
+    needs_context = len(q_words) <= 2 or bool(raw_tokens & pronouns)
 
     if needs_context:
         recent_context = " ".join(user_turns[-2:])

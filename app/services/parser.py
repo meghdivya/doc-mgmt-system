@@ -1,4 +1,3 @@
-from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 import re
@@ -39,21 +38,10 @@ def _extract_pdf_pages(path: Path) -> list[ParsedPage]:
         if len(non_empty_lines) > 25:
             avg_words = sum(len(ln.split()) for ln in non_empty_lines) / len(non_empty_lines)
             if avg_words < 1.8:
-                grouped: dict[float, list[tuple[float, str]]] = defaultdict(list)
-
-                def _visitor(txt, cm, tm, _font_dict, _font_size):
-                    if txt and txt.strip():
-                        y = round(cm[5] + tm[5], 1)
-                        x = round(cm[4] + tm[4], 1)
-                        grouped[y].append((x, txt.strip()))
-
-                page.extract_text(visitor_text=_visitor)
-                if grouped:
-                    rebuilt = [
-                        " ".join(tok for _x, tok in sorted(grouped[y]))
-                        for y in sorted(grouped.keys(), reverse=True)
-                    ]
-                    raw = "\n".join(rebuilt)
+                joined = " ".join(non_empty_lines)
+                joined = joined.replace("\ufffd", "\n- ")
+                joined = re.sub(r"\s+(\d+\.)\s+", r"\n\1 ", joined)
+                raw = joined
 
         normalized = _normalize_text(raw)
         if normalized:
