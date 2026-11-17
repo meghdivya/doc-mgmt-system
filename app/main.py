@@ -6,8 +6,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.chat import router as chat_router
 from app.api.v1.documents import router as documents_router
 from app.api.v1.health import router as health_router
+from app.api.v1.metrics import router as metrics_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.core.middleware import ObservabilityMiddleware
 from app.db.session import init_db
 
 
@@ -30,6 +32,7 @@ def create_app() -> FastAPI:
         ),
         lifespan=lifespan,
     )
+    application.add_middleware(ObservabilityMiddleware)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -40,6 +43,7 @@ def create_app() -> FastAPI:
     application.include_router(health_router, prefix="/api/v1")
     application.include_router(documents_router, prefix="/api/v1")
     application.include_router(chat_router, prefix="/api/v1")
+    application.include_router(metrics_router, prefix="/api/v1")
     application.include_router(health_router)
     return application
 
