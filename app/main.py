@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.v1.documents import router as documents_router
 from app.api.v1.health import router as health_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
@@ -36,6 +37,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     application.include_router(health_router, prefix="/api/v1")
+    application.include_router(documents_router, prefix="/api/v1")
     application.include_router(health_router)
     return application
 
