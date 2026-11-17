@@ -1,13 +1,11 @@
-# Progress log
+# Progress Tracker — AI-Powered Vault Document System
 
-## 2026-11-17
-- Project scaffold created
-- MVP scope defined
-- Local FastAPI + SQLite architecture set
-- End-to-end API tests planned and added
-
-## Status
-- Setup: complete
-- Product catalog: in progress
-- Orders: planned
-- Dashboard: planned
+| Milestone | Feature | E2E Tests | Status |
+|---|---|---|---|
+| 1 | Core config, DB schema, health endpoint & plan | `tests/test_health.py` (2 passed) | Completed |
+| 2 | Upload handler, PDF/DOCX/TXT parser, chunker, async worker | `tests/test_documents.py` | In Progress |
+| 3 | AI provider (OpenAI + Local fallback), caching, insights & custom summary | `tests/test_insights.py` | Pending |
+| 4 | Multi-turn RAG chat, citations, multi-doc, follow-ups & SSE stream | `tests/test_chat_rag.py` | Pending |
+| 5 | Document statistics & processing/cost metrics APIs | `tests/test_metrics.py` | Pending |
+| 6 | Minimal local Vault UI (`/`) + CLI demo (`scripts/demo.py`) | `tests/test_e2e_flow.py` | Pending |
+| 7 | `README.md`, `AI_USAGE.md`, `docker-compose.yml` & final check | Full suite | Pending |
