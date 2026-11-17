@@ -11,6 +11,14 @@ from app.schemas.document import (
     DocumentListResponse,
     DocumentRead,
 )
+from app.schemas.insights import (
+    CompareDocumentsRequest,
+    CompareDocumentsResponse,
+    CustomSummaryRequest,
+    CustomSummaryResponse,
+    DocumentInsightRead,
+)
+from app.services.ai_provider import generate_custom_summary
 from app.services.storage import delete_stored_file, save_upload_file
 from app.workers.pipeline import enqueue_document_processing
 
@@ -119,3 +127,119 @@ def delete_document(document_id: int, db: Session = Depends(get_db)) -> None:
     db.delete(doc)
     db.commit()
     delete_stored_file(storage_path)
+
+
+@router.get("/{document_id}/insights", response_model=DocumentInsightRead)
+def get_document_insights(
+    document_id: int,
+    db: Session = Depends(get_db),
+) -> DocumentInsightRead:
+    doc = db.get(Document, document_id)
+    if doc is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    if doc.insight is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Document insights not ready (current status: {doc.status}).",
+        )
+    return DocumentInsightRead.model_validate(doc.insight)
+
+
+@router.post("/{document_id}/summarize", response_model=CustomSummaryResponse)
+def customize_document_summary(
+    document_id: int,
+    payload: CustomSummaryRequest,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> CustomSummaryResponse:
+    doc = db.get(Document, document_id)
+    if doc is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+
+    chunks = (
+        db.query(DocumentChunk)
+        .filter(DocumentChunk.document_id == doc.id)
+        .order_by(DocumentChunk.chunk_index)
+        .all()
+    )
+    if not chunks:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Document chunks not ready (current status: {doc.status}).",
+        )
+
+    full_text = "\n\n".join(c.content for c in chunks)
+    res = generate_custom_summary(
+        text=full_text,
+        length=payload.length,
+        focus=payload.focus,
+        tone=payload.tone,
+        settings=settings,
+    )
+    return CustomSummaryResponse(
+        document_id=doc.id,
+        filename=doc.filename,
+        length=payload.length,
+        focus=payload.focus,
+        tone=payload.tone,
+        summary=res.summary,
+        model_used=res.model_used,
+        tokens_used=res.tokens_used,
+        estimated_cost_usd=res.estimated_cost_usd,
+        cached=res.cached,
+    )
+
+
+@router.post("/compare", response_model=CompareDocumentsResponse)
+def compare_documents(
+    payload: CompareDocumentsRequest,
+    db: Session = Depends(get_db),
+) -> CompareDocumentsResponse:
+    docs = db.query(Document).filter(Document.id.in_(payload.document_ids)).all()
+    if len(docs) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="At least 2 valid completed documents are required for comparison.",
+        )
+
+    topic_sets: list[set[str]] = []
+    cat_sets: list[set[str]] = []
+    per_doc: list[dict] = []
+    for doc in docs:
+        ins = doc.insight
+        topics = list(ins.topics) if ins else []
+        cats = list(ins.categories) if ins else []
+        topic_sets.append(set(topics))
+        cat_sets.append(set(cats))
+        per_doc.append(
+            {
+                "document_id": doc.id,
+                "filename": doc.filename,
+                "word_count": doc.word_count,
+                "categories": cats,
+                "topics": topics,
+                "sentiment": ins.sentiment if ins else "neutral",
+                "summary": ins.summary if ins else "",
+            }
+        )
+
+    shared_topics = sorted(set.intersection(*topic_sets)) if topic_sets else []
+    shared_cats = sorted(set.intersection(*cat_sets)) if cat_sets else []
+    comp_lines = [
+        f"- **{d['filename']}** ({d['word_count']} words, {d['sentiment']}): {d['summary']}"
+        for d in per_doc
+    ]
+    overlap_note = (
+        f"Shared themes: {', '.join(shared_topics or shared_cats)}."
+        if (shared_topics or shared_cats)
+        else "The documents cover distinct focus areas with minimal direct topic overlap."
+    )
+    comparative_summary = f"{overlap_note}\n" + "\n".join(comp_lines)
+
+    return CompareDocumentsResponse(
+        document_ids=[d.id for d in docs],
+        shared_topics=shared_topics,
+        shared_categories=shared_cats,
+        per_document=per_doc,
+        comparative_summary=comparative_summary,
+    )
