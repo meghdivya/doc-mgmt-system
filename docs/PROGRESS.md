@@ -8,4 +8,8 @@
 | 4 | Multi-turn RAG chat, citations, multi-doc, follow-ups & SSE stream | `tests/test_chat_rag.py` (2 passed) | Completed |
 | 5 | Document statistics & processing/cost metrics APIs | `tests/test_metrics.py` (2 passed) | Completed |
 | 6 | Minimal local Vault UI (`/`) + CLI demo (`scripts/demo.py`) | `tests/test_e2e_flow.py` (3 passed) | Completed |
-| 7 | `README.md`, `AI_USAGE.md`, `docker-compose.yml` & final check | Full suite (16 passed) | In Progress |
+| 7 | `README.md`, `AI_USAGE.md`, `docker-compose.yml` & final check | Full suite (16 passed) | Completed |
+
+## Verification Summary
+- **Automated Pytest Suite**: `16 passed` across health, document upload/versioning, PDF/DOCX/TXT parsing, AI insights, custom summaries, multi-document comparison, multi-turn RAG chat with citations, SSE streaming, metrics, rate limiting, web UI, and CLI demo.
+- **Local Demo**: `python -m scripts.demo` verified against the 4-page Case Study PDF.
