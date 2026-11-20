@@ -22,7 +22,7 @@ async function loadHealthAndMetrics() {
     api("/api/v1/metrics/processing"),
   ]);
   document.getElementById("aiModeBadge").textContent =
-    `AI: ${health.ai_mode.toUpperCase()} · DB: ${health.database_backend}`;
+    `AI: ${health.ai_mode.toUpperCase()} (${health.chat_model}) · DB: ${health.database_backend}`;
 
   const pipeAvg = procStats.stage_latency_ms.full_pipeline
     ? `${procStats.stage_latency_ms.full_pipeline.avg_duration_ms} ms`

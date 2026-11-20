@@ -133,7 +133,8 @@ def get_processing_metrics(
         stage_latency_ms=stage_latency,
         ai_usage={
             "active_ai_mode": settings.ai_mode,
-            "chat_model": settings.openai_chat_model if settings.openai_api_key else "local-rag-v1",
+            "chat_model": settings.active_chat_model,
+            "embedding_model": settings.active_embedding_model,
             "total_tokens_used": int(ai_totals[0]),
             "total_estimated_cost_usd": round(float(ai_totals[1]), 6),
         },

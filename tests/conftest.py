@@ -20,7 +20,8 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[TestCli
 
     monkeypatch.setenv("DATABASE_URL", db_url)
     monkeypatch.setenv("UPLOAD_DIR", upload_dir.as_posix())
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
     monkeypatch.setenv("USE_CELERY", "false")
 
     test_app = create_app()

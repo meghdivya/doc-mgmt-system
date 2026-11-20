@@ -108,13 +108,57 @@ def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
     return sum(a * b for a, b in zip(vec_a, vec_b))
 
 
+def build_llm_client(settings: Settings):
+    """Build an OpenAI-compatible client configured for OpenRouter or OpenAI."""
+    from openai import OpenAI
+
+    if settings.openrouter_api_key:
+        return OpenAI(
+            api_key=settings.openrouter_api_key,
+            base_url=settings.openrouter_base_url,
+            default_headers={
+                "HTTP-Referer": settings.openrouter_site_url,
+                "X-Title": settings.openrouter_site_name,
+            },
+        )
+    return OpenAI(api_key=settings.openai_api_key)
+
+
+def _parse_json_object(raw_content: str | None) -> dict[str, Any]:
+    if not raw_content:
+        return {}
+    cleaned = raw_content.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except json.JSONDecodeError:
+                return {}
+        return {}
+
+
+def _extract_usage_cost(usage: Any, fallback_tokens: int, rate_per_million: float) -> tuple[int, float]:
+    tokens = getattr(usage, "total_tokens", 0) or fallback_tokens
+    provider_cost = getattr(usage, "cost", None)
+    if provider_cost is not None:
+        return int(tokens), round(float(provider_cost), 8)
+    return int(tokens), round((tokens / 1_000_000) * rate_per_million, 8)
+
+
 def embed_texts(texts: list[str], settings: Settings) -> tuple[list[list[float]], int, float]:
-    """Embed batch of strings with caching; uses OpenAI if configured, else local hashing."""
+    """Embed batch of strings with caching; uses OpenRouter/OpenAI if configured, else local hashing."""
     results: list[list[float] | None] = [None] * len(texts)
     missing_indices: list[int] = []
+    emb_ns = f"emb:{settings.ai_mode}:{settings.active_embedding_model}"
 
     for i, text in enumerate(texts):
-        cache_key = vault_cache.make_key(f"emb:{settings.ai_mode}", text)
+        cache_key = vault_cache.make_key(emb_ns, text)
         cached = vault_cache.get(cache_key)
         if cached is not None:
             results[i] = cached
@@ -125,29 +169,24 @@ def embed_texts(texts: list[str], settings: Settings) -> tuple[list[list[float]]
     cost_usd = 0.0
 
     if missing_indices:
-        if settings.openai_api_key:
-            from openai import OpenAI
-
-            client = OpenAI(api_key=settings.openai_api_key)
+        if settings.has_llm:
+            client = build_llm_client(settings)
             batch_inputs = [texts[i] for i in missing_indices]
             resp = client.embeddings.create(
-                model=settings.openai_embedding_model,
+                model=settings.active_embedding_model,
                 input=batch_inputs,
             )
-            tokens_used = getattr(resp.usage, "total_tokens", 0) or sum(
-                estimate_tokens(t) for t in batch_inputs
-            )
-            # text-embedding-3-small pricing: ~$0.02 / 1M tokens
-            cost_usd = round((tokens_used / 1_000_000) * 0.02, 8)
+            fallback_tok = sum(estimate_tokens(t) for t in batch_inputs)
+            tokens_used, cost_usd = _extract_usage_cost(resp.usage, fallback_tok, 0.02)
             for idx, item in zip(missing_indices, resp.data):
                 vec = list(item.embedding)
                 results[idx] = vec
-                vault_cache.set(vault_cache.make_key(f"emb:{settings.ai_mode}", texts[idx]), vec)
+                vault_cache.set(vault_cache.make_key(emb_ns, texts[idx]), vec)
         else:
             for idx in missing_indices:
                 vec = local_embed_text(texts[idx])
                 results[idx] = vec
-                vault_cache.set(vault_cache.make_key(f"emb:{settings.ai_mode}", texts[idx]), vec)
+                vault_cache.set(vault_cache.make_key(emb_ns, texts[idx]), vec)
 
     return [r or [] for r in results], tokens_used, cost_usd
 
@@ -233,30 +272,29 @@ def _local_generate_insights(text: str) -> InsightGenerationResult:
 
 def generate_document_insights(text: str, settings: Settings) -> InsightGenerationResult:
     excerpt = text[:12000]
-    if settings.openai_api_key:
-        from openai import OpenAI
-
-        client = OpenAI(api_key=settings.openai_api_key)
+    if settings.has_llm:
+        client = build_llm_client(settings)
+        model_name = settings.active_chat_model
         resp = client.chat.completions.create(
-            model=settings.openai_chat_model,
+            model=model_name,
             response_format={"type": "json_object"},
             temperature=0.2,
+            max_tokens=900,
             messages=[
                 {"role": "system", "content": DOCUMENT_INSIGHTS_SYSTEM_PROMPT},
                 {"role": "user", "content": f"Document content:\n\n{excerpt}"},
             ],
         )
-        data = json.loads(resp.choices[0].message.content or "{}")
-        tokens = getattr(resp.usage, "total_tokens", 0) or estimate_tokens(excerpt)
-        # gpt-4o-mini blended estimate: ~$0.30 / 1M tokens
-        cost = round((tokens / 1_000_000) * 0.30, 8)
+        data = _parse_json_object(resp.choices[0].message.content)
+        rate = 2.50 if "gpt-4o" in model_name and "mini" not in model_name else 0.30
+        tokens, cost = _extract_usage_cost(resp.usage, estimate_tokens(excerpt), rate)
         return InsightGenerationResult(
             summary=data.get("summary") or "Summary unavailable.",
             key_insights=list(data.get("key_insights") or [])[:5],
             categories=list(data.get("categories") or ["General Document"])[:3],
             topics=list(data.get("topics") or [])[:6],
             sentiment=str(data.get("sentiment") or "neutral").lower(),
-            model_used=settings.openai_chat_model,
+            model_used=model_name,
             tokens_used=tokens,
             estimated_cost_usd=cost,
         )
@@ -272,7 +310,7 @@ def generate_custom_summary(
     settings: Settings,
 ) -> CustomSummaryResult:
     cache_key = vault_cache.make_key(
-        f"sum:{settings.ai_mode}",
+        f"sum:{settings.ai_mode}:{settings.active_chat_model}",
         {"h": hashlib.sha256(text[:10000].encode("utf-8")).hexdigest(), "l": length, "f": focus, "t": tone},
     )
     cached = vault_cache.get(cache_key)
@@ -280,25 +318,25 @@ def generate_custom_summary(
         return CustomSummaryResult(**cached, cached=True)
 
     excerpt = text[:12000]
-    if settings.openai_api_key:
-        from openai import OpenAI
-
-        client = OpenAI(api_key=settings.openai_api_key)
+    if settings.has_llm:
+        client = build_llm_client(settings)
+        model_name = settings.active_chat_model
         system_prompt = CUSTOM_SUMMARY_SYSTEM_PROMPT.format(length=length, focus=focus, tone=tone)
         resp = client.chat.completions.create(
-            model=settings.openai_chat_model,
+            model=model_name,
             temperature=0.2,
+            max_tokens=900,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": excerpt},
             ],
         )
         summary_text = (resp.choices[0].message.content or "").strip()
-        tokens = getattr(resp.usage, "total_tokens", 0) or estimate_tokens(excerpt)
-        cost = round((tokens / 1_000_000) * 0.30, 8)
+        rate = 2.50 if "gpt-4o" in model_name and "mini" not in model_name else 0.30
+        tokens, cost = _extract_usage_cost(resp.usage, estimate_tokens(excerpt), rate)
         payload = {
             "summary": summary_text,
-            "model_used": settings.openai_chat_model,
+            "model_used": model_name,
             "tokens_used": tokens,
             "estimated_cost_usd": cost,
         }
@@ -352,13 +390,13 @@ def generate_grounded_rag_answer(
                 "What topics are covered in the uploaded documents?",
                 "Can you summarize the main document?",
             ],
-            model_used=settings.openai_chat_model if settings.openai_api_key else "local-rag-v1",
+            model_used=settings.active_chat_model,
             tokens_used=0,
             estimated_cost_usd=0.0,
         )
 
     cache_key = vault_cache.make_key(
-        f"rag:{settings.ai_mode}",
+        f"rag:{settings.ai_mode}:{settings.active_chat_model}",
         {
             "q": question.strip().lower(),
             "h": [m["content"] for m in history[-2:]],
@@ -374,10 +412,9 @@ def generate_grounded_rag_answer(
         for idx, c in enumerate(contexts, start=1)
     )
 
-    if settings.openai_api_key:
-        from openai import OpenAI
-
-        client = OpenAI(api_key=settings.openai_api_key)
+    if settings.has_llm:
+        client = build_llm_client(settings)
+        model_name = settings.active_chat_model
         messages: list[dict[str, str]] = [{"role": "system", "content": RAG_CHAT_SYSTEM_PROMPT}]
         for turn in history[-6:]:
             messages.append({"role": turn["role"], "content": turn["content"]})
@@ -388,18 +425,22 @@ def generate_grounded_rag_answer(
             }
         )
         resp = client.chat.completions.create(
-            model=settings.openai_chat_model,
+            model=model_name,
             response_format={"type": "json_object"},
             temperature=0.2,
+            max_tokens=1000,
             messages=messages,  # type: ignore[arg-type]
         )
-        parsed = json.loads(resp.choices[0].message.content or "{}")
-        tokens = getattr(resp.usage, "total_tokens", 0) or estimate_tokens(context_block + question)
-        cost = round((tokens / 1_000_000) * 0.30, 8)
+        raw_text = resp.choices[0].message.content or ""
+        parsed = _parse_json_object(raw_text)
+        rate = 2.50 if "gpt-4o" in model_name and "mini" not in model_name else 0.30
+        tokens, cost = _extract_usage_cost(
+            resp.usage, estimate_tokens(context_block + question), rate
+        )
         payload = {
-            "answer": parsed.get("answer") or "Unable to synthesize answer.",
+            "answer": parsed.get("answer") or raw_text.strip() or "Unable to synthesize answer.",
             "follow_up_questions": list(parsed.get("follow_up_questions") or [])[:3],
-            "model_used": settings.openai_chat_model,
+            "model_used": model_name,
             "tokens_used": tokens,
             "estimated_cost_usd": cost,
         }

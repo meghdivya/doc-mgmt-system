@@ -63,7 +63,9 @@ def test_full_end_to_end_lifecycle(client):
     assert client.get("/api/v1/metrics/processing").json()["success_rate_pct"] == 100.0
 
 
-def test_demo_script_runs_cleanly(capsys):
+def test_demo_script_runs_cleanly(capsys, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
     run_demo()
     captured = capsys.readouterr().out
     assert "AI-POWERED VAULT DOCUMENT SYSTEM" in captured

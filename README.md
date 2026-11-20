@@ -4,9 +4,10 @@ An AI-first document management and conversational RAG ("ChatGPT for your docume
 
 ## Key Features
 - **Intelligent Ingestion & Async Pipeline**: Validates uploads, tracks document versions via SHA-256, parses page-aware PDF/DOCX/TXT/MD text, chunks with overlap, and processes asynchronously (`pending → processing → completed/failed`).
-- **Dual-Mode AI Engine (Zero-Config Local + OpenAI)**:
-  - **OpenAI Mode**: Set `OPENAI_API_KEY` to use `gpt-4o-mini` + `text-embedding-3-small` with token and USD cost tracking.
-  - **Local Mode (Default)**: Works offline out-of-the-box using deterministic 256-dim feature-hashed embeddings and extractive synthesis.
+- **Multi-Mode AI Engine (OpenRouter + OpenAI + Local Fallback)**:
+  - **OpenRouter Mode**: Set `OPENROUTER_API_KEY` in `.env` to run real `openai/gpt-4o` + `openai/text-embedding-3-small` via `https://openrouter.ai/api/v1` with `HTTP-Referer` and `X-Title` headers and token/USD cost tracking.
+  - **OpenAI Mode**: Set `OPENAI_API_KEY` to use `gpt-4o-mini` + `text-embedding-3-small`.
+  - **Local Mode (Fallback)**: Works offline out-of-the-box when no API key is configured.
 - **Smart Document Insights**: Auto-generated executive summaries, key takeaways, category/topic tags, sentiment, customizable summaries (`length`, `focus`, `tone`), and multi-document comparison.
 - **Conversational RAG Chat**: Single-doc and multi-doc chat sessions, pronoun-aware multi-turn context expansion, hybrid dense + lexical retrieval, source citations (`filename`, `page_number`, `chunk_index`, `score`), follow-up question suggestions, and SSE streaming.
 - **Observability & Production Controls**: Document statistics API, stage-level pipeline latency/cost metrics API, LRU+TTL `SmartCache`, `X-Process-Time-Ms` headers, and sliding-window rate limiting.
