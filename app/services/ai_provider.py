@@ -385,7 +385,10 @@ def generate_grounded_rag_answer(
     """Generate a citation-grounded answer + follow-up questions from retrieved chunks."""
     if not contexts:
         return RagGenerationResult(
-            answer="I could not find relevant content in the selected vault documents to answer that question.",
+            answer=(
+                "I couldn't find information about that in your uploaded documents. "
+                "I can help you with something else related to your vault—try asking about the topics covered in your files."
+            ),
             follow_up_questions=[
                 "What topics are covered in the uploaded documents?",
                 "Can you summarize the main document?",
@@ -396,7 +399,7 @@ def generate_grounded_rag_answer(
         )
 
     cache_key = vault_cache.make_key(
-        f"rag:{settings.ai_mode}:{settings.active_chat_model}",
+        f"rag:v2:{settings.ai_mode}:{settings.active_chat_model}",
         {
             "q": question.strip().lower(),
             "h": [m["content"] for m in history[-2:]],
@@ -452,6 +455,31 @@ def generate_grounded_rag_answer(
     for turn in history[-2:]:
         if turn["role"] == "user":
             q_terms.update(tokenize_words(turn["content"])[:4])
+
+    # If none of the query terms appear in any retrieved chunk and dense score is low, refuse off-topic query
+    max_term_overlap = max(
+        (len(set(tokenize_words(ctx["content"])) & q_terms) for ctx in contexts[:4]),
+        default=0,
+    )
+    max_score = max((float(ctx.get("score", 0.0)) for ctx in contexts[:4]), default=0.0)
+    if q_terms and max_term_overlap == 0 and max_score < 0.25:
+        all_ctx_words = tokenize_words(" ".join(c["content"] for c in contexts[:3]))
+        top_terms = [w for w, _ in Counter(all_ctx_words).most_common(4)]
+        suggestions = [f"What does the document say about {t}?" for t in top_terms[:2]] or [
+            f"Can you summarize {contexts[0]['filename']}?"
+        ]
+        payload = {
+            "answer": (
+                "I couldn't find information about that in your uploaded documents, so I can't answer it from your vault. "
+                "I can help you with something else related to your uploaded documents—try asking about one of the topics covered in them."
+            ),
+            "follow_up_questions": suggestions,
+            "model_used": "local-rag-v1",
+            "tokens_used": estimate_tokens(question),
+            "estimated_cost_usd": 0.0,
+        }
+        vault_cache.set(cache_key, payload)
+        return RagGenerationResult(**payload, cached=False)
 
     evidence_points: list[str] = []
     seen_snippets: set[str] = set()

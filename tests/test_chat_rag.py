@@ -86,3 +86,32 @@ def test_multi_document_chat_and_sse_streaming(client):
 
     sessions = client.get("/api/v1/chat/sessions").json()
     assert any(s["id"] == session_id for s in sessions)
+
+
+def test_off_topic_questions_are_declined_without_outside_knowledge(client):
+    doc_id = client.post(
+        "/api/v1/documents/upload",
+        files={
+            "file": (
+                "vault_policy.txt",
+                b"Vault retention policy requires encrypted backups every 6 hours.",
+                "text/plain",
+            )
+        },
+    ).json()["id"]
+
+    session_id = client.post(
+        "/api/v1/chat/sessions",
+        json={"document_ids": [doc_id]},
+    ).json()["id"]
+
+    for off_topic in ["What is the capital of France?", "Can you write code for LCA?"]:
+        res = client.post(
+            f"/api/v1/chat/sessions/{session_id}/messages",
+            json={"question": off_topic},
+        )
+        assert res.status_code == 200
+        answer = res.json()["assistant_message"]["content"]
+        assert "help you with something else" in answer.lower()
+        assert "paris" not in answer.lower()
+
