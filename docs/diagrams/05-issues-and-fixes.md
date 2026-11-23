@@ -8,6 +8,7 @@ flowchart LR
     I2 --> I3["3. Off-Topic Answers\n(Capital of France / LCA Code)"]
     I3 --> I4["4. Incomplete List Retrieval\n(Bonus Points Missing SSE)"]
     I4 --> I5["5. Stale Cache & Non-Reload\nServer Process"]
+    I5 --> I6["6. Unhandled 402/429\nToken Exhaustion (HTTP 500)"]
 ```
 
 ---
@@ -63,3 +64,14 @@ flowchart LR
   - Versioned the RAG cache namespace (`rag:v2` → `rag:v3`) in `app/services/ai_provider.py` whenever grounding/retrieval semantics change.
   - Stopped the stale process and restarted `uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`.
 - **Verification:** Verified `/api/v1/health` returned fresh `uptime_seconds` and updated capabilities.
+
+---
+
+### Issue 6: Upstream AI Token/Credit Exhaustion Returning Generic HTTP 500
+- **Symptom:** Asking *"can you give summary of all paragraphs"* in the chat UI displayed `Error: Internal Server Error` instead of explaining that the AI provider's token/credit limit was reached.
+- **Root Cause:** `openai.APIStatusError` (HTTP `402` from OpenRouter for insufficient credits, or `429` rate/token limits) was uncaught in `app/services/ai_provider.py`, causing FastAPI to emit an unhandled `500 Internal Server Error`.
+- **Fix:**
+  - Added `AIProviderError` and `_call_provider()` in `app/services/ai_provider.py` wrapping all `embeddings.create` and `chat.completions.create` calls.
+  - Mapped `402`/`429` and credit/token/quota errors to a clear message: *"You exhausted your token limits or credits with the AI provider. Please add credits or switch to local mode."*
+  - Registered a global `@application.exception_handler(AIProviderError)` in `app/main.py` and handled `AIProviderError` in `app/api/v1/ws.py` so both REST and WebSocket clients receive the structured error detail.
+- **Verification:** Added `test_provider_token_exhaustion_returns_clear_error` in `tests/test_llm_provider.py`; all 34 tests passed.
