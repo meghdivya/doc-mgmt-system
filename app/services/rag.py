@@ -5,11 +5,11 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.db.models import ChatMessage, ChatSession, Document, DocumentChunk, ProcessingMetric
 from app.services.ai_provider import (
-    cosine_similarity,
     embed_texts,
     generate_grounded_rag_answer,
     tokenize_words,
 )
+from app.services.vector_store import VectorSearchHit, get_vector_store
 
 
 def contextualize_query(question: str, prior_messages: list[ChatMessage]) -> str:
@@ -37,58 +37,55 @@ def retrieve_relevant_chunks(
     top_k: int,
     settings: Settings,
 ) -> list[dict[str, Any]]:
-    """Hybrid dense + lexical retrieval across single or multiple vault documents."""
-    chunk_query = (
-        db.query(DocumentChunk, Document.filename)
-        .join(Document, DocumentChunk.document_id == Document.id)
-        .filter(Document.status == "completed")
-    )
-    if document_ids:
-        chunk_query = chunk_query.filter(DocumentChunk.document_id.in_(document_ids))
-
-    rows = chunk_query.all()
-    if not rows:
-        return []
-
+    """Hybrid vector-store dense + lexical retrieval across single or multiple vault documents."""
     query_vecs, _tok, _cost = embed_texts([query], settings)
     query_vec = query_vecs[0] if query_vecs else []
-    query_terms = set(tokenize_words(query))
 
-    scored: list[tuple[float, DocumentChunk, str]] = []
-    for chunk, filename in rows:
-        dense = cosine_similarity(query_vec, chunk.embedding or [])
-        chunk_terms = set(tokenize_words(chunk.content))
+    vector_store = get_vector_store(settings)
+    candidate_limit = max(top_k * 4, 20)
+    hits = vector_store.search(
+        db=db,
+        query_vec=query_vec,
+        document_ids=document_ids,
+        top_k=candidate_limit,
+    )
+    if not hits:
+        return []
+
+    query_terms = set(tokenize_words(query))
+    scored: list[tuple[float, VectorSearchHit]] = []
+    for hit in hits:
+        dense = max(0.0, hit.score)
+        chunk_terms = set(tokenize_words(hit.content))
         if query_terms and chunk_terms:
             lexical = len(query_terms & chunk_terms) / max(1, min(len(query_terms), 8))
         else:
             lexical = 0.0
-        hybrid_score = 0.65 * max(0.0, dense) + 0.35 * lexical
+        hybrid_score = 0.65 * dense + 0.35 * lexical
         if hybrid_score > 0.01:
-            scored.append((hybrid_score, chunk, filename))
+            scored.append((hybrid_score, hit))
 
     # Fallback if query terms had zero direct overlap: take highest dense matches
     if not scored:
-        for chunk, filename in rows:
-            dense = max(0.0, cosine_similarity(query_vec, chunk.embedding or []))
-            scored.append((dense, chunk, filename))
+        scored = [(max(0.0, hit.score), hit) for hit in hits]
 
     scored.sort(key=lambda item: item[0], reverse=True)
     selected = scored[:top_k]
 
     results: list[dict[str, Any]] = []
-    for idx, (score, chunk, filename) in enumerate(selected, start=1):
-        excerpt = chunk.content[:240].strip()
-        if len(chunk.content) > 240:
+    for idx, (score, hit) in enumerate(selected, start=1):
+        excerpt = hit.content[:240].strip()
+        if len(hit.content) > 240:
             excerpt += "..."
         results.append(
             {
                 "source_index": idx,
-                "document_id": chunk.document_id,
-                "filename": filename,
-                "page_number": chunk.page_number,
-                "chunk_index": chunk.chunk_index,
+                "document_id": hit.document_id,
+                "filename": hit.filename,
+                "page_number": hit.page_number,
+                "chunk_index": hit.chunk_index,
                 "score": round(float(score), 4),
-                "content": chunk.content,
+                "content": hit.content,
                 "excerpt": excerpt,
             }
         )

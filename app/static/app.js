@@ -175,19 +175,35 @@ document.getElementById("uploadForm").addEventListener("submit", async (e) => {
   btn.disabled = true;
   btn.textContent = "Processing...";
   try {
-    const fd = new FormData();
-    fd.append("file", fileInput.files[0]);
-    const created = await api("/api/v1/documents/upload", { method: "POST", body: fd });
+    const files = Array.from(fileInput.files);
+    let createdIds = [];
+    if (files.length === 1) {
+      const fd = new FormData();
+      fd.append("file", files[0]);
+      const created = await api("/api/v1/documents/upload", { method: "POST", body: fd });
+      createdIds = [created.id];
+    } else {
+      const fd = new FormData();
+      for (const f of files) {
+        fd.append("files", f);
+      }
+      const batch = await api("/api/v1/documents/upload/batch", { method: "POST", body: fd });
+      createdIds = batch.documents.map((d) => d.id);
+    }
     fileInput.value = "";
     // Poll briefly if background task is still running
-    for (let i = 0; i < 15; i++) {
-      const d = await api(`/api/v1/documents/${created.id}`);
-      if (d.status === "completed" || d.status === "failed") break;
+    for (let i = 0; i < 25; i++) {
+      const statuses = await Promise.all(
+        createdIds.map((id) => api(`/api/v1/documents/${id}`).then((d) => d.status))
+      );
+      if (statuses.every((s) => s === "completed" || s === "failed")) break;
       await new Promise((r) => setTimeout(r, 350));
     }
-    state.activeInsightDocId = created.id;
-    await refreshAll();
-    await selectDocumentForInsights(created.id);
+    if (createdIds.length) {
+      state.activeInsightDocId = createdIds[0];
+      await refreshAll();
+      await selectDocumentForInsights(createdIds[0]);
+    }
   } catch (err) {
     alert(err.message);
   } finally {
@@ -263,4 +279,23 @@ async function refreshAll() {
   await Promise.all([loadHealthAndMetrics(), loadDocuments()]);
 }
 
+function connectDocumentStatusSocket() {
+  try {
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(`${proto}//${window.location.host}/api/v1/ws/documents`);
+    ws.onmessage = (evt) => {
+      const data = JSON.parse(evt.data);
+      if (data && data.event === "status" && (data.status === "completed" || data.status === "failed")) {
+        refreshAll();
+      }
+    };
+    ws.onclose = () => {
+      setTimeout(connectDocumentStatusSocket, 5000);
+    };
+  } catch {
+    // Graceful fallback to manual refresh if WebSocket is unavailable
+  }
+}
+
 refreshAll();
+connectDocumentStatusSocket();

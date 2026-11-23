@@ -10,6 +10,8 @@ from app.api.v1.chat import router as chat_router
 from app.api.v1.documents import router as documents_router
 from app.api.v1.health import router as health_router
 from app.api.v1.metrics import router as metrics_router
+from app.api.v1.ws import router as ws_router
+from app.core.cache import vault_cache
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.core.middleware import ObservabilityMiddleware
@@ -21,6 +23,11 @@ async def lifespan(_app: FastAPI):
     configure_logging()
     settings = get_settings()
     init_db(settings.database_url)
+    vault_cache.configure(
+        db_path=settings.cache_db_path,
+        ttl_seconds=settings.cache_ttl_seconds,
+        redis_url=settings.redis_url,
+    )
     yield
 
 
@@ -47,6 +54,7 @@ def create_app() -> FastAPI:
     application.include_router(documents_router, prefix="/api/v1")
     application.include_router(chat_router, prefix="/api/v1")
     application.include_router(metrics_router, prefix="/api/v1")
+    application.include_router(ws_router, prefix="/api/v1")
     application.include_router(health_router)
 
     static_dir = Path(__file__).resolve().parent / "static"

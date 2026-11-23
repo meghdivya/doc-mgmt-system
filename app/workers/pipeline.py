@@ -7,6 +7,7 @@ from app.db.models import Document, DocumentChunk, ProcessingMetric
 from app.db.session import get_session_factory
 from app.services.chunker import chunk_pages
 from app.services.parser import parse_document_file
+from app.services.ws_manager import ws_manager
 
 logger = get_logger("pipeline")
 
@@ -25,6 +26,16 @@ def process_document_pipeline(document_id: int, database_url: str | None = None)
         doc.status = "processing"
         doc.error_message = None
         db.commit()
+        ws_manager.publish_document_event(
+            doc.id,
+            {
+                "event": "status",
+                "document_id": doc.id,
+                "filename": doc.filename,
+                "status": "processing",
+                "stage": "started",
+            },
+        )
 
         pipeline_start = time.perf_counter()
         try:
@@ -69,6 +80,20 @@ def process_document_pipeline(document_id: int, database_url: str | None = None)
                 )
             )
             db.commit()
+            ws_manager.publish_document_event(
+                doc.id,
+                {
+                    "event": "status",
+                    "document_id": doc.id,
+                    "filename": doc.filename,
+                    "status": "processing",
+                    "stage": "parse_and_chunk",
+                    "page_count": doc.page_count,
+                    "word_count": doc.word_count,
+                    "chunks_created": len(chunk_models),
+                    "duration_ms": parse_ms,
+                },
+            )
 
             # Stage 2 & 3: Embeddings + AI Insights (wired when insights/ai_provider module is present)
             try:
@@ -90,6 +115,20 @@ def process_document_pipeline(document_id: int, database_url: str | None = None)
                 )
             )
             db.commit()
+            ws_manager.publish_document_event(
+                doc.id,
+                {
+                    "event": "status",
+                    "document_id": doc.id,
+                    "filename": doc.filename,
+                    "status": "completed",
+                    "stage": "full_pipeline",
+                    "page_count": doc.page_count,
+                    "word_count": doc.word_count,
+                    "chunks_created": len(chunk_models),
+                    "duration_ms": total_ms,
+                },
+            )
             logger.info(
                 "Processed document id=%s (%s): %s pages, %s chunks in %sms",
                 doc.id,
@@ -115,6 +154,16 @@ def process_document_pipeline(document_id: int, database_url: str | None = None)
                 )
             )
             db.commit()
+            ws_manager.publish_document_event(
+                document_id,
+                {
+                    "event": "status",
+                    "document_id": document_id,
+                    "status": "failed",
+                    "stage": "full_pipeline",
+                    "error_message": str(exc),
+                },
+            )
             logger.error("Failed processing document id=%s: %s", document_id, exc)
 
 
@@ -130,4 +179,42 @@ def enqueue_document_processing(
         return "celery"
 
     background_tasks.add_task(process_document_pipeline, document_id, settings.database_url)
+    return "background_tasks"
+
+
+def process_batch_pipeline(document_ids: list[int], database_url: str | None = None) -> None:
+    """Process a batch of documents sequentially and record batch-level telemetry."""
+    settings = get_settings()
+    batch_start = time.perf_counter()
+    for doc_id in document_ids:
+        process_document_pipeline(doc_id, database_url)
+
+    batch_ms = round((time.perf_counter() - batch_start) * 1000, 2)
+    session_factory = get_session_factory(database_url or settings.database_url)
+    with session_factory() as db:
+        db.add(
+            ProcessingMetric(
+                document_id=None,
+                stage="batch_pipeline",
+                status="completed",
+                duration_ms=batch_ms,
+                chunks_created=len(document_ids),
+            )
+        )
+        db.commit()
+
+
+def enqueue_batch_processing(
+    background_tasks: BackgroundTasks,
+    document_ids: list[int],
+    settings: Settings,
+) -> str:
+    if settings.use_celery and settings.redis_url:
+        from app.workers.celery_app import process_document_task
+
+        for doc_id in document_ids:
+            process_document_task.delay(doc_id, settings.database_url)
+        return "celery"
+
+    background_tasks.add_task(process_batch_pipeline, document_ids, settings.database_url)
     return "background_tasks"

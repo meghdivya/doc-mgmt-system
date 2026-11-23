@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.db.models import Document, DocumentChunk, DocumentInsight, ProcessingMetric
 from app.services.ai_provider import embed_texts, generate_document_insights
+from app.services.vector_store import get_vector_store
 
 
 def enrich_document_embeddings_and_insights(
@@ -40,6 +41,7 @@ def enrich_document_embeddings_and_insights(
         )
     )
     db.commit()
+    get_vector_store(settings).upsert_document_chunks(doc.id, doc.filename, chunks)
 
     # Stage 3: Smart Document Analysis & Insights
     ins_start = time.perf_counter()

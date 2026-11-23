@@ -47,3 +47,16 @@ class ProcessingMetricsResponse(BaseModel):
     cache_stats: dict[str, Any]
     http_performance: dict[str, Any]
     recent_events: list[ProcessingEventRead]
+
+
+class QuotaMetricItem(BaseModel):
+    used: int | float
+    limit: int | float
+    remaining: int | float
+
+
+class QuotaStatusResponse(BaseModel):
+    documents: QuotaMetricItem
+    storage_bytes: QuotaMetricItem
+    daily_tokens: QuotaMetricItem
+    daily_cost_usd: QuotaMetricItem

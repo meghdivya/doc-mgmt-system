@@ -19,8 +19,10 @@ from app.schemas.metrics import (
     DocumentStatisticsResponse,
     ProcessingEventRead,
     ProcessingMetricsResponse,
+    QuotaStatusResponse,
     StageLatencySummary,
 )
+from app.services.quota import get_quota_status
 
 router = APIRouter(prefix="/metrics", tags=["Monitoring & Metrics"])
 
@@ -142,3 +144,11 @@ def get_processing_metrics(
         http_performance=http_tracker.snapshot(),
         recent_events=[ProcessingEventRead.model_validate(ev) for ev in recent],
     )
+
+
+@router.get("/quotas", response_model=QuotaStatusResponse)
+def get_quotas(
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> QuotaStatusResponse:
+    return QuotaStatusResponse(**get_quota_status(db, settings))

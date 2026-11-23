@@ -6,6 +6,7 @@ from app.core.config import Settings, get_settings
 from app.db.models import Document, DocumentChunk
 from app.db.session import get_db
 from app.schemas.document import (
+    BatchUploadResponse,
     DocumentDetailRead,
     DocumentInsightBrief,
     DocumentListResponse,
@@ -19,8 +20,10 @@ from app.schemas.insights import (
     DocumentInsightRead,
 )
 from app.services.ai_provider import generate_custom_summary
+from app.services.quota import check_ai_quota, check_upload_quota
 from app.services.storage import delete_stored_file, save_upload_file
-from app.workers.pipeline import enqueue_document_processing
+from app.services.vector_store import get_vector_store
+from app.workers.pipeline import enqueue_batch_processing, enqueue_document_processing
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
@@ -33,6 +36,11 @@ async def upload_document(
     settings: Settings = Depends(get_settings),
 ) -> Document:
     stored = await save_upload_file(file, settings)
+    try:
+        check_upload_quota(db, stored.file_size, 1, settings)
+    except Exception:
+        delete_stored_file(stored.storage_path)
+        raise
 
     latest_version = (
         db.query(func.max(Document.version))
@@ -57,6 +65,73 @@ async def upload_document(
 
     enqueue_document_processing(background_tasks, doc.id, settings)
     return doc
+
+
+@router.post("/upload/batch", response_model=BatchUploadResponse, status_code=status.HTTP_201_CREATED)
+async def upload_documents_batch(
+    background_tasks: BackgroundTasks,
+    files: list[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> BatchUploadResponse:
+    if not files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one file is required for batch upload.",
+        )
+    if len(files) > settings.max_batch_upload_files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Batch upload exceeds maximum of {settings.max_batch_upload_files} files.",
+        )
+
+    stored_files = []
+    try:
+        for file in files:
+            stored_files.append(await save_upload_file(file, settings))
+        total_bytes = sum(s.file_size for s in stored_files)
+        check_upload_quota(db, total_bytes, len(stored_files), settings)
+    except Exception:
+        for s in stored_files:
+            delete_stored_file(s.storage_path)
+        raise
+
+    docs: list[Document] = []
+    version_cache: dict[str, int] = {}
+    for stored in stored_files:
+        if stored.filename not in version_cache:
+            latest_version = (
+                db.query(func.max(Document.version))
+                .filter(Document.filename == stored.filename)
+                .scalar()
+            )
+            version_cache[stored.filename] = (latest_version or 0) + 1
+        else:
+            version_cache[stored.filename] += 1
+
+        doc = Document(
+            filename=stored.filename,
+            content_type=stored.content_type,
+            file_ext=stored.file_ext,
+            file_size=stored.file_size,
+            sha256=stored.sha256,
+            storage_path=stored.storage_path,
+            version=version_cache[stored.filename],
+            status="pending",
+        )
+        db.add(doc)
+        docs.append(doc)
+
+    db.commit()
+    for doc in docs:
+        db.refresh(doc)
+
+    queue_mode = enqueue_batch_processing(background_tasks, [d.id for d in docs], settings)
+    return BatchUploadResponse(
+        uploaded_count=len(docs),
+        queue_mode=queue_mode,
+        documents=[DocumentRead.model_validate(d) for d in docs],
+    )
 
 
 @router.get("", response_model=DocumentListResponse)
@@ -118,7 +193,11 @@ def reprocess_document(
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_document(document_id: int, db: Session = Depends(get_db)) -> None:
+def delete_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> None:
     doc = db.get(Document, document_id)
     if doc is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
@@ -126,6 +205,7 @@ def delete_document(document_id: int, db: Session = Depends(get_db)) -> None:
     storage_path = doc.storage_path
     db.delete(doc)
     db.commit()
+    get_vector_store(settings).delete_document_chunks(document_id)
     delete_stored_file(storage_path)
 
 
@@ -152,6 +232,7 @@ def customize_document_summary(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> CustomSummaryResponse:
+    check_ai_quota(db, settings)
     doc = db.get(Document, document_id)
     if doc is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")

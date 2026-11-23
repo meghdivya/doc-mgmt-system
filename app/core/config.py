@@ -53,7 +53,16 @@ class Settings(BaseSettings):
     # Task queue / Caching (optional Redis + Celery for distributed scale)
     redis_url: str | None = Field(default=None, alias="REDIS_URL")
     use_celery: bool = Field(default=False, alias="USE_CELERY")
+    cache_db_path: str = Field(default="data/cache.db", alias="CACHE_DB_PATH")
+    cache_ttl_seconds: int = Field(default=3600, alias="CACHE_TTL_SECONDS")
     rate_limit_per_minute: int = Field(default=120, alias="RATE_LIMIT_PER_MINUTE")
+
+    # Local quota management
+    max_documents: int = Field(default=500, alias="MAX_DOCUMENTS")
+    max_total_storage_mb: int = Field(default=500, alias="MAX_TOTAL_STORAGE_MB")
+    max_daily_tokens: int = Field(default=1_000_000, alias="MAX_DAILY_TOKENS")
+    max_daily_cost_usd: float = Field(default=10.0, alias="MAX_DAILY_COST_USD")
+    max_batch_upload_files: int = Field(default=20, alias="MAX_BATCH_UPLOAD_FILES")
 
     @property
     def has_llm(self) -> bool:
@@ -85,6 +94,8 @@ class Settings(BaseSettings):
 
     def ensure_dirs(self) -> None:
         Path(self.upload_dir).mkdir(parents=True, exist_ok=True)
+        if self.cache_db_path and self.cache_db_path != ":memory:":
+            Path(self.cache_db_path).parent.mkdir(parents=True, exist_ok=True)
         if self.database_url.startswith("sqlite:///"):
             sqlite_path = self.database_url.replace("sqlite:///", "", 1)
             if sqlite_path and sqlite_path != ":memory:":

@@ -15,6 +15,7 @@ from app.schemas.chat import (
     ChatSessionDetailRead,
     ChatSessionRead,
 )
+from app.services.quota import check_ai_quota
 from app.services.rag import execute_chat_turn
 
 router = APIRouter(prefix="/chat", tags=["Document Chat (RAG)"])
@@ -76,6 +77,7 @@ def ask_question(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> AskQuestionResponse:
+    check_ai_quota(db, settings)
     session = db.get(ChatSession, session_id)
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not found.")
@@ -102,6 +104,7 @@ def ask_question_stream(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
+    check_ai_quota(db, settings)
     session = db.get(ChatSession, session_id)
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not found.")

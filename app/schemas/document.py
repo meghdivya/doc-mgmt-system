@@ -36,3 +36,9 @@ class DocumentDetailRead(DocumentRead):
 class DocumentListResponse(BaseModel):
     total: int
     items: list[DocumentRead]
+
+
+class BatchUploadResponse(BaseModel):
+    uploaded_count: int
+    queue_mode: str
+    documents: list[DocumentRead]
