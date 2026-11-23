@@ -115,3 +115,33 @@ def test_off_topic_questions_are_declined_without_outside_knowledge(client):
         assert "help you with something else" in answer.lower()
         assert "paris" not in answer.lower()
 
+
+def test_multi_chunk_section_expands_adjacent_chunk(client):
+    # Create a document whose single page spans multiple chunks (~1600 chars > 900 chunk size)
+    section_text = (
+        "Bonus Points Overview:\n"
+        + ("Advanced AI Features include multi-document chat and sentiment analysis. " * 14)
+        + "\nTechnical Excellence includes SSE streaming, WebSocket updates, and Redis caching.\n"
+        + "Production Readiness includes cost tracking, rate limiting, and quota management."
+    ).encode("utf-8")
+
+    doc_id = client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("bonus_spec.txt", section_text, "text/plain")},
+    ).json()["id"]
+
+    session_id = client.post(
+        "/api/v1/chat/sessions",
+        json={"document_ids": [doc_id]},
+    ).json()["id"]
+
+    res = client.post(
+        f"/api/v1/chat/sessions/{session_id}/messages",
+        json={"question": "What is listed under Bonus Points?", "top_k": 1},
+    )
+    assert res.status_code == 200
+    citations = res.json()["assistant_message"]["citations"]
+    combined = " ".join(c["excerpt"] for c in citations)
+    assert len(citations) >= 2
+    assert "Bonus Points" in combined or "Technical Excellence" in combined
+

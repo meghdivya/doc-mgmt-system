@@ -72,8 +72,43 @@ def retrieve_relevant_chunks(
     scored.sort(key=lambda item: item[0], reverse=True)
     selected = scored[:top_k]
 
+    # Expand top 2 hits with their immediate next chunk on the same page right after each hit
+    selected_keys = {(h.document_id, h.chunk_index) for _s, h in selected}
+    expanded: list[tuple[float, VectorSearchHit]] = []
+    for idx, (score, h) in enumerate(selected):
+        expanded.append((score, h))
+        if idx < 2 and (h.document_id, h.chunk_index + 1) not in selected_keys:
+            row = (
+                db.query(DocumentChunk, Document.filename)
+                .join(Document, DocumentChunk.document_id == Document.id)
+                .filter(
+                    DocumentChunk.document_id == h.document_id,
+                    DocumentChunk.page_number == h.page_number,
+                    DocumentChunk.chunk_index == h.chunk_index + 1,
+                    Document.status == "completed",
+                )
+                .first()
+            )
+            if row is not None:
+                chunk, filename = row
+                expanded.append(
+                    (
+                        score * 0.95,
+                        VectorSearchHit(
+                            chunk_id=chunk.id,
+                            document_id=chunk.document_id,
+                            filename=filename,
+                            page_number=chunk.page_number,
+                            chunk_index=chunk.chunk_index,
+                            content=chunk.content,
+                            score=score * 0.95,
+                        ),
+                    )
+                )
+                selected_keys.add((h.document_id, h.chunk_index + 1))
+
     results: list[dict[str, Any]] = []
-    for idx, (score, hit) in enumerate(selected, start=1):
+    for idx, (score, hit) in enumerate(expanded, start=1):
         excerpt = hit.content[:240].strip()
         if len(hit.content) > 240:
             excerpt += "..."

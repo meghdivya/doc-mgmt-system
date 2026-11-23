@@ -399,7 +399,7 @@ def generate_grounded_rag_answer(
         )
 
     cache_key = vault_cache.make_key(
-        f"rag:v2:{settings.ai_mode}:{settings.active_chat_model}",
+        f"rag:v3:{settings.ai_mode}:{settings.active_chat_model}",
         {
             "q": question.strip().lower(),
             "h": [m["content"] for m in history[-2:]],
