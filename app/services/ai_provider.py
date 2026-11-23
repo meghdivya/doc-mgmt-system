@@ -108,6 +108,40 @@ def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
     return sum(a * b for a, b in zip(vec_a, vec_b))
 
 
+class AIProviderError(RuntimeError):
+    """Structured upstream AI provider error (e.g. token/credit exhaustion, rate limit)."""
+
+    def __init__(self, status_code: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
+def _call_provider(fn):
+    from openai import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
+
+    try:
+        return fn()
+    except RateLimitError as exc:
+        raise AIProviderError(
+            429,
+            "You exhausted your token limits with the AI provider. Please wait for rate limits to reset or switch to local mode.",
+        ) from exc
+    except APIStatusError as exc:
+        msg = str(exc)
+        lowered = msg.lower()
+        if exc.status_code in (402, 429) or any(
+            kw in lowered for kw in ("credit", "quota", "token", "limit", "insufficient", "afford")
+        ):
+            raise AIProviderError(
+                429 if exc.status_code == 429 else 402,
+                "You exhausted your token limits or credits with the AI provider. Please add credits or switch to local mode.",
+            ) from exc
+        raise AIProviderError(502, f"AI provider error ({exc.status_code}): {msg}") from exc
+    except (APIConnectionError, APITimeoutError) as exc:
+        raise AIProviderError(504, f"AI provider connection/timeout error: {exc}") from exc
+
+
 def build_llm_client(settings: Settings):
     """Build an OpenAI-compatible client configured for OpenRouter or OpenAI."""
     from openai import OpenAI
@@ -172,9 +206,11 @@ def embed_texts(texts: list[str], settings: Settings) -> tuple[list[list[float]]
         if settings.has_llm:
             client = build_llm_client(settings)
             batch_inputs = [texts[i] for i in missing_indices]
-            resp = client.embeddings.create(
-                model=settings.active_embedding_model,
-                input=batch_inputs,
+            resp = _call_provider(
+                lambda: client.embeddings.create(
+                    model=settings.active_embedding_model,
+                    input=batch_inputs,
+                )
             )
             fallback_tok = sum(estimate_tokens(t) for t in batch_inputs)
             tokens_used, cost_usd = _extract_usage_cost(resp.usage, fallback_tok, 0.02)
@@ -275,15 +311,17 @@ def generate_document_insights(text: str, settings: Settings) -> InsightGenerati
     if settings.has_llm:
         client = build_llm_client(settings)
         model_name = settings.active_chat_model
-        resp = client.chat.completions.create(
-            model=model_name,
-            response_format={"type": "json_object"},
-            temperature=0.2,
-            max_tokens=900,
-            messages=[
-                {"role": "system", "content": DOCUMENT_INSIGHTS_SYSTEM_PROMPT},
-                {"role": "user", "content": f"Document content:\n\n{excerpt}"},
-            ],
+        resp = _call_provider(
+            lambda: client.chat.completions.create(
+                model=model_name,
+                response_format={"type": "json_object"},
+                temperature=0.2,
+                max_tokens=900,
+                messages=[
+                    {"role": "system", "content": DOCUMENT_INSIGHTS_SYSTEM_PROMPT},
+                    {"role": "user", "content": f"Document content:\n\n{excerpt}"},
+                ],
+            )
         )
         data = _parse_json_object(resp.choices[0].message.content)
         rate = 2.50 if "gpt-4o" in model_name and "mini" not in model_name else 0.30
@@ -322,14 +360,16 @@ def generate_custom_summary(
         client = build_llm_client(settings)
         model_name = settings.active_chat_model
         system_prompt = CUSTOM_SUMMARY_SYSTEM_PROMPT.format(length=length, focus=focus, tone=tone)
-        resp = client.chat.completions.create(
-            model=model_name,
-            temperature=0.2,
-            max_tokens=900,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": excerpt},
-            ],
+        resp = _call_provider(
+            lambda: client.chat.completions.create(
+                model=model_name,
+                temperature=0.2,
+                max_tokens=900,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": excerpt},
+                ],
+            )
         )
         summary_text = (resp.choices[0].message.content or "").strip()
         rate = 2.50 if "gpt-4o" in model_name and "mini" not in model_name else 0.30
@@ -427,12 +467,14 @@ def generate_grounded_rag_answer(
                 "content": f"Context Excerpts:\n{context_block}\n\nQuestion: {question}",
             }
         )
-        resp = client.chat.completions.create(
-            model=model_name,
-            response_format={"type": "json_object"},
-            temperature=0.2,
-            max_tokens=1000,
-            messages=messages,  # type: ignore[arg-type]
+        resp = _call_provider(
+            lambda: client.chat.completions.create(
+                model=model_name,
+                response_format={"type": "json_object"},
+                temperature=0.2,
+                max_tokens=1000,
+                messages=messages,  # type: ignore[arg-type]
+            )
         )
         raw_text = resp.choices[0].message.content or ""
         parsed = _parse_json_object(raw_text)

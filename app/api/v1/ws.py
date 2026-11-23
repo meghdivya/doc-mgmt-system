@@ -6,6 +6,7 @@ from app.core.config import Settings, get_settings
 from app.db.models import ChatSession, Document
 from app.db.session import get_db
 from app.schemas.chat import ChatMessageRead
+from app.services.ai_provider import AIProviderError
 from app.services.rag import execute_chat_turn
 from app.services.ws_manager import ws_manager
 
@@ -77,14 +78,18 @@ async def ws_chat_stream(
                 continue
             top_k = payload.get("top_k")
 
-            _user_msg, assistant_msg, cached = await asyncio.to_thread(
-                execute_chat_turn,
-                db=db,
-                session=session,
-                question=question,
-                top_k=int(top_k) if top_k is not None else None,
-                settings=settings,
-            )
+            try:
+                _user_msg, assistant_msg, cached = await asyncio.to_thread(
+                    execute_chat_turn,
+                    db=db,
+                    session=session,
+                    question=question,
+                    top_k=int(top_k) if top_k is not None else None,
+                    settings=settings,
+                )
+            except AIProviderError as exc:
+                await websocket.send_json({"event": "error", "detail": exc.detail})
+                continue
             assistant_data = ChatMessageRead.model_validate(assistant_msg).model_dump(mode="json")
 
             words = assistant_data["content"].split(" ")

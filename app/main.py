@@ -1,9 +1,9 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.chat import router as chat_router
@@ -16,6 +16,7 @@ from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.core.middleware import ObservabilityMiddleware
 from app.db.session import init_db
+from app.services.ai_provider import AIProviderError
 
 
 @asynccontextmanager
@@ -56,6 +57,10 @@ def create_app() -> FastAPI:
     application.include_router(metrics_router, prefix="/api/v1")
     application.include_router(ws_router, prefix="/api/v1")
     application.include_router(health_router)
+
+    @application.exception_handler(AIProviderError)
+    async def ai_provider_error_handler(_request: Request, exc: AIProviderError) -> JSONResponse:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
     static_dir = Path(__file__).resolve().parent / "static"
     if static_dir.exists():
